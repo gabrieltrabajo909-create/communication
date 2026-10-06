@@ -58,6 +58,12 @@ header.top h1{flex:1;margin:0;font-size:24px;font-weight:750;letter-spacing:-.01
 .org > .group > ul > li::before,.org > .group > ul > li::after{display:none}
 .org ul ul::before{content:'';position:absolute;top:0;left:50%;height:18px;border-left:2px solid var(--line)}
 .card{width:132px;background:var(--card);border:1px solid var(--line);border-top:4px solid var(--neutral);border-radius:12px;padding:9px 8px 8px;text-align:center}
+.card{position:relative}
+.org ul ul > li > .card::before{content:'';position:absolute;top:-9px;left:50%;margin-left:-6px;border:6px solid transparent;border-top-color:#59606E;border-bottom:0}
+.card.tipc{width:150px;border-top-color:var(--accent);font-size:14px;line-height:1.3;padding:10px 8px;font-weight:600}
+.modal{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:15;display:flex;align-items:flex-end;justify-content:center}
+.modal .box{background:var(--bg);border:1px solid var(--line);border-radius:18px 18px 0 0;width:100%;max-width:640px;padding:16px 16px calc(20px + env(safe-area-inset-bottom,0px))}
+.modal .row{display:flex;gap:8px;flex-wrap:wrap;margin-top:16px}
 .card .name{display:block;font-weight:700;font-size:14px;line-height:1.25}
 .card .role{display:block;color:var(--muted);font-size:12px;line-height:1.3;margin-top:3px}
 .card .inf{display:block;margin-top:4px}
@@ -127,9 +133,11 @@ textarea.in{min-height:80px;resize:vertical}
   </section>
 
   <section id="tab-tips" hidden>
-    <p class="hint">Tus reglas para hablar con la gente. Tocá un texto para editarlo.</p>
+    <div class="view" id="tview"><button data-v="chart" aria-pressed="true">Mapa</button><button data-v="list" aria-pressed="false">Lista</button></div>
+    <p class="hint">Tocá un consejo para editarlo, moverlo debajo de otro o agregarle uno abajo.</p>
     <p class="empty" id="tips-empty" hidden>Todavía no cargaste consejos.</p>
-    <ul class="tips" id="tips"></ul>
+    <div class="chart" id="tchart"></div>
+    <ul class="tree" id="tlist"></ul>
     <form class="add-row" id="tip-form">
       <input id="tip-new" placeholder="Nuevo consejo" autocomplete="off">
       <button class="btn">Agregar</button>
@@ -178,6 +186,20 @@ textarea.in{min-height:80px;resize:vertical}
   </div>
 </div>
 
+<div class="modal" id="tip-modal" hidden>
+  <div class="box">
+    <label class="f" for="t-text" style="margin-top:0">Consejo</label>
+    <textarea class="in" id="t-text"></textarea>
+    <label class="f" for="t-parent">Va debajo de</label>
+    <select class="in" id="t-parent"></select>
+    <div class="row">
+      <button class="btn" id="t-done">Listo</button>
+      <button class="btn ghost" id="t-child">+ Agregar debajo</button>
+      <button class="btn danger" id="t-del">Borrar</button>
+    </div>
+  </div>
+</div>
+
 <script>
 const KEY = 'communication-v1';
 const INF = [['alta', 'Alta'], ['media', 'Media'], ['baja', 'Baja']];
@@ -185,16 +207,18 @@ const REL = [['yo', 'Yo', 'var(--me)'], ['aliado', 'Aliado', 'var(--ally)'], ['n
 const STARS = { alta: '★★★', media: '★★', baja: '★' };
 const OLD_DEFAULT_TIPS = ['Preguntá antes de opinar: entendé qué necesita el otro.', 'Repetí con tus palabras lo que entendiste.', 'Llevá datos, no sólo opiniones.', 'Elogios en público, críticas en privado.', 'Cerrá cada charla con próximos pasos claros.', 'Dejá que el otro termine. Hablá después.', 'Respirá antes de hablar y hablá a conciencia.', 'No hables de más: decí lo justo y callate.'];
 
+function uid(){ return Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
 let db = load();
 function load(){
   try {
     const d = JSON.parse(localStorage.getItem(KEY));
     if (d && d.people && d.tips) {
       if (!d.v) { d.tips = d.tips.filter(t => !OLD_DEFAULT_TIPS.includes(t)); d.v = 2; }   // los consejos los carga el usuario
+      if (d.v < 3) { d.tips = d.tips.map(t => typeof t === 'string' ? { id: uid(), text: t, parent: '' } : t); d.v = 3; }   // consejos en árbol
       return d;
     }
   } catch {}
-  return { v: 2, people: [], tips: [] };
+  return { v: 3, people: [], tips: [] };
 }
 function save(){ try { localStorage.setItem(KEY, JSON.stringify(db)); } catch {} }
 const $ = id => document.getElementById(id);
@@ -269,29 +293,66 @@ $('q').oninput = renderMap;
 let tipIdx = Math.floor(Math.random() * 1000);
 function showTip(){
   $('tip').hidden = db.tips.length === 0;
-  if (db.tips.length) $('tip-text').textContent = db.tips[tipIdx % db.tips.length];
+  if (db.tips.length) $('tip-text').textContent = db.tips[tipIdx % db.tips.length].text;
 }
 $('tip').onclick = () => { tipIdx++; showTip(); };
 
-/* ---------- consejos ---------- */
+/* ---------- consejos (árbol) ---------- */
+let tview = 'chart', tcur = null;
+const tipById = id => db.tips.find(t => t.id === id);
+const tkids = id => db.tips.filter(t => id ? t.parent === id : !t.parent || !tipById(t.parent));
+function tdesc(id){
+  const out = new Set([id]); let grew = true;
+  while (grew) { grew = false; for (const t of db.tips) if (t.parent && out.has(t.parent) && !out.has(t.id)) { out.add(t.id); grew = true; } }
+  return out;
+}
 function renderTips(){
-  $('tips').innerHTML = db.tips.map((t, i) => `<li><textarea rows="1" data-i="${i}">${esc(t)}</textarea><button class="del" data-i="${i}" aria-label="Borrar">×</button></li>`).join('');
-  $('tips').querySelectorAll('textarea').forEach(grow);
+  const seen = new Set();
+  const card = t => `<button class="card tipc" data-id="${t.id}">${esc(t.text)}</button>`;
+  const branch = t => { if (seen.has(t.id)) return ''; seen.add(t.id); const ch = tkids(t.id).map(branch).join(''); return `<li>${card(t)}${ch ? `<ul>${ch}</ul>` : ''}</li>`; };
+  const rs = tkids(''), big = rs.filter(t => tkids(t.id).length), solo = rs.filter(t => !tkids(t.id).length);
+  $('tchart').innerHTML = '<div class="org">' + big.map(t => `<div class="group"><ul>${branch(t)}</ul></div>`).join('')
+    + (solo.length ? `<div class="group"><ul style="flex-wrap:wrap;gap:10px 0">${solo.map(t => `<li>${card(t)}</li>`).join('')}</ul></div>` : '') + '</div>';
+  seen.clear();
+  const lbranch = t => { if (seen.has(t.id)) return ''; seen.add(t.id); const ch = tkids(t.id).map(lbranch).join('');
+    return `<li><button class="node" data-id="${t.id}"><span class="who" style="white-space:pre-wrap">${esc(t.text)}</span></button>${ch ? `<ul>${ch}</ul>` : ''}</li>`; };
+  $('tlist').innerHTML = rs.map(lbranch).join('');
+  $('tchart').hidden = tview !== 'chart'; $('tlist').hidden = tview !== 'list';
   $('tips-empty').hidden = db.tips.length > 0;
 }
-function grow(t){ t.style.height = 'auto'; t.style.height = t.scrollHeight + 'px'; }
-$('tips').oninput = e => { const t = e.target; if (t.dataset.i == null) return; db.tips[t.dataset.i] = t.value; grow(t); save(); };
-$('tips').addEventListener('focusout', e => {
-  const t = e.target; if (t.tagName !== 'TEXTAREA') return;
-  if (!t.value.trim()) { db.tips.splice(+t.dataset.i, 1); save(); renderTips(); }
-});
-$('tips').onclick = e => {
-  const b = e.target.closest('.del'); if (!b) return;
-  if (confirm('¿Borrar este consejo?')) { db.tips.splice(+b.dataset.i, 1); save(); renderTips(); }
+$('tview').onclick = e => {
+  const b = e.target.closest('button'); if (!b) return;
+  tview = b.dataset.v; $('tview').querySelectorAll('button').forEach(x => x.setAttribute('aria-pressed', x === b)); renderTips();
+};
+function openTip(id){
+  tcur = tipById(id); if (!tcur) return;
+  $('t-text').value = tcur.text;
+  const bad = tdesc(tcur.id);
+  $('t-parent').innerHTML = '<option value="">— Arriba de todo —</option>' + db.tips.filter(t => !bad.has(t.id))
+    .map(t => `<option value="${t.id}"${t.id === tcur.parent ? ' selected' : ''}>${esc(t.text.length > 60 ? t.text.slice(0, 60) + '…' : t.text)}</option>`).join('');
+  $('tip-modal').hidden = false;
+}
+function closeTip(){
+  if (tcur && !tcur.text.trim()) removeTip(tcur.id);
+  tcur = null; $('tip-modal').hidden = true; save(); renderTips();
+}
+function removeTip(id){
+  const t = tipById(id); db.tips = db.tips.filter(x => x.id !== id);
+  db.tips.forEach(x => { if (x.parent === id) x.parent = t.parent || ''; });
+}
+$('tchart').onclick = $('tlist').onclick = e => { const n = e.target.closest('[data-id]'); if (n) openTip(n.dataset.id); };
+$('t-text').oninput = () => { tcur.text = $('t-text').value; save(); };
+$('t-parent').onchange = () => { tcur.parent = $('t-parent').value; save(); };
+$('t-done').onclick = closeTip;
+$('tip-modal').onclick = e => { if (e.target.id === 'tip-modal') closeTip(); };
+$('t-del').onclick = () => { if (confirm('¿Borrar este consejo? Los de abajo suben un nivel.')) { removeTip(tcur.id); tcur = null; closeTip(); } };
+$('t-child').onclick = () => {
+  const parent = tcur.id; closeTip();
+  const t = { id: uid(), text: '', parent }; db.tips.push(t); openTip(t.id); $('t-text').focus();
 };
 $('tip-form').onsubmit = e => {
   e.preventDefault(); const v = $('tip-new').value.trim(); if (!v) return;
-  db.tips.push(v); $('tip-new').value = ''; save(); renderTips();
+  db.tips.push({ id: uid(), text: v, parent: '' }); $('tip-new').value = ''; save(); renderTips();
 };
 
 function render(){ tab === 'map' ? renderMap() : renderTips(); }
@@ -387,7 +448,9 @@ function toText(){
     if (p.log?.length) { L.push('Notas:'); p.log.forEach(l => L.push(`  ${new Date(l.t).toISOString().slice(0, 10)} — ${l.text}`)); }
   });
   L.push('', '== CONSEJOS ==');
-  db.tips.forEach(t => L.push('- ' + t));
+  const tseen = new Set();
+  const twalk = (t, depth) => { if (tseen.has(t.id)) return; tseen.add(t.id); L.push('  '.repeat(depth) + '- ' + t.text.replace(/\n/g, ' ')); tkids(t.id).forEach(k => twalk(k, depth + 1)); };
+  tkids('').forEach(t => twalk(t, 0));
   return L.join('\n') + '\n';
 }
 $('export').onclick = async () => {
@@ -406,7 +469,7 @@ function parseText(text){
     const line = raw.replace(/\s+$/, '');
     const h = line.match(/^==\s*(.+?)\s*==$/);
     if (h) { sec = norm(h[1]); cur = null; continue; }
-    if (sec === 'consejos') { const m = line.match(/^\s*-\s+(.+)/); if (m) tips.push(m[1].trim()); continue; }
+    if (sec === 'consejos') { const m = line.match(/^(\s*)[-*•]\s+(.+)/); if (m) tips.push({ depth: Math.floor(m[1].replace(/\t/g, '  ').length / 2), text: m[2].trim() }); continue; }
     if (sec !== 'personas') continue;
     let m = line.match(/^#\s+(.+)/);
     if (m) { cur = { name: m[1].trim(), log: [] }; people.push(cur); last = null; inNotes = false; continue; }
@@ -442,7 +505,15 @@ function importText(text){
     const b = p._boss && find(p._boss); delete p._boss;
     p.boss = b && !descendants(p.id).has(b.id) ? b.id : '';
   }
-  for (const t of tips) if (!db.tips.includes(t)) db.tips.push(t);
+  const stack = [];
+  for (const q of tips) {
+    let t = db.tips.find(x => norm(x.text) === norm(q.text));
+    if (!t) { t = { id: uid(), text: q.text, parent: '' }; db.tips.push(t); }
+    stack.length = Math.min(q.depth, stack.length);
+    const parent = stack[stack.length - 1] || '';
+    if (!tdesc(t.id).has(parent)) t.parent = parent;
+    stack.push(t.id);
+  }
   save(); render(); toast('Datos cargados.');
 }
 $('import').onclick = () => $('file').click();
