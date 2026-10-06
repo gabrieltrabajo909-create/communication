@@ -12,7 +12,7 @@
 :root{
   --bg:#0E1014; --card:#1A1D23; --ink:#ECEEF2; --muted:#8C93A1; --line:#2A2E36;
   --accent:#4C8DD6; --accent-ink:#FFFFFF; --accent-soft:#1E2E44; --danger:#E06A55;
-  --ally:#3FBF84; --neutral:#8C93A1; --build:#E0A23A; --hard:#E06A55;
+  --ally:#3FBF84; --neutral:#8C93A1; --build:#E0A23A; --hard:#E06A55; --me:#4C8DD6;
   color-scheme:dark;
   --font:system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 }
@@ -37,6 +37,32 @@ header.top h1{flex:1;margin:0;font-size:24px;font-weight:750;letter-spacing:-.01
 .node .name{font-weight:650;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .node .role{color:var(--muted);font-size:14px;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .inf{font-size:12px;font-weight:700;color:var(--muted);flex:none}
+.view{display:flex;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:3px;margin-bottom:12px}
+.view button{flex:1;padding:8px 0;border-radius:9px;font-weight:650;color:var(--muted);font-size:15px}
+.view button[aria-pressed=true]{background:var(--accent-soft);color:var(--ink)}
+.chart{overflow-x:auto;margin:0 -16px;padding:4px 16px 8px}
+.org{display:flex;flex-direction:column;align-items:flex-start;gap:22px}
+.org .group{min-width:100%;display:flex;justify-content:center}
+.org ul{display:flex;justify-content:center;list-style:none;margin:0;padding:18px 0 0;position:relative}
+.org > .group > ul{padding-top:0}
+.org li{display:flex;flex-direction:column;align-items:center;position:relative;padding:18px 5px 0}
+.org > .group > ul > li{padding-top:0}
+.org li::before,.org li::after{content:'';position:absolute;top:0;width:50%;height:18px;border-top:2px solid var(--line)}
+.org li::before{right:50%}
+.org li::after{left:50%;border-left:2px solid var(--line)}
+.org li:only-child::before,.org li:only-child::after{border-top:0}
+.org li:first-child::before,.org li:last-child::after{border-top:0}
+.org li:last-child::before{border-right:2px solid var(--line);border-radius:0 6px 0 0}
+.org li:first-child::after{border-radius:6px 0 0 0}
+.org li:only-child::after{border-radius:0}
+.org > .group > ul > li::before,.org > .group > ul > li::after{display:none}
+.org ul ul::before{content:'';position:absolute;top:0;left:50%;height:18px;border-left:2px solid var(--line)}
+.card{width:132px;background:var(--card);border:1px solid var(--line);border-top:4px solid var(--neutral);border-radius:12px;padding:9px 8px 8px;text-align:center}
+.card .name{display:block;font-weight:700;font-size:14px;line-height:1.25}
+.card .role{display:block;color:var(--muted);font-size:12px;line-height:1.3;margin-top:3px}
+.card .inf{display:block;margin-top:4px}
+.card.me{box-shadow:0 0 0 2px var(--accent)}
+.solo-l{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.06em;margin:6px 0 -12px}
 .empty{color:var(--muted);text-align:center;padding:36px 12px}
 .legend{display:flex;flex-wrap:wrap;gap:12px;color:var(--muted);font-size:13px;margin:14px 2px 0}
 .legend span{display:flex;align-items:center;gap:6px}
@@ -78,11 +104,15 @@ textarea.in{min-height:80px;resize:vertical}
   <header class="top">
     <h1 id="title">Mapa</h1>
     <button class="icon-btn" id="ai" aria-label="Copiar para IA" title="Copiar para IA" style="width:auto;padding:0 12px;font-size:14px;font-weight:700">IA</button>
+    <button class="icon-btn" id="import" aria-label="Subir TXT" title="Subir TXT">⬆</button>
+    <input type="file" id="file" accept=".txt,text/plain" hidden>
     <button class="icon-btn" id="export" aria-label="Descargar TXT" title="Descargar TXT">⬇</button>
   </header>
 
   <section id="tab-map">
     <button class="tip" id="tip"><small>Recordá · tocá para otro</small><span id="tip-text"></span></button>
+    <div class="view" id="view"><button data-v="chart" aria-pressed="true">Organigrama</button><button data-v="list" aria-pressed="false">Lista</button></div>
+    <div class="chart" id="chart"></div>
     <input class="search" id="q" type="search" placeholder="Buscar nombre, rol o área">
     <ul class="tree" id="tree"></ul>
     <p class="empty" id="empty" hidden>Todavía no hay nadie.<br>Tocá <b>+</b> para agregar a la primera persona.</p>
@@ -91,12 +121,14 @@ textarea.in{min-height:80px;resize:vertical}
       <span><i class="dot" style="background:var(--neutral)"></i>Neutral</span>
       <span><i class="dot" style="background:var(--build)"></i>A construir</span>
       <span><i class="dot" style="background:var(--hard)"></i>Difícil</span>
+      <span><i class="dot" style="background:var(--me)"></i>Yo</span>
       <span>★ influencia</span>
     </div>
   </section>
 
   <section id="tab-tips" hidden>
     <p class="hint">Tus reglas para hablar con la gente. Tocá un texto para editarlo.</p>
+    <p class="empty" id="tips-empty" hidden>Todavía no cargaste consejos.</p>
     <ul class="tips" id="tips"></ul>
     <form class="add-row" id="tip-form">
       <input id="tip-new" placeholder="Nuevo consejo" autocomplete="off">
@@ -149,30 +181,28 @@ textarea.in{min-height:80px;resize:vertical}
 <script>
 const KEY = 'communication-v1';
 const INF = [['alta', 'Alta'], ['media', 'Media'], ['baja', 'Baja']];
-const REL = [['aliado', 'Aliado', 'var(--ally)'], ['neutral', 'Neutral', 'var(--neutral)'], ['construir', 'A construir', 'var(--build)'], ['dificil', 'Difícil', 'var(--hard)']];
+const REL = [['yo', 'Yo', 'var(--me)'], ['aliado', 'Aliado', 'var(--ally)'], ['neutral', 'Neutral', 'var(--neutral)'], ['construir', 'A construir', 'var(--build)'], ['dificil', 'Difícil', 'var(--hard)']];
 const STARS = { alta: '★★★', media: '★★', baja: '★' };
-const DEFAULT_TIPS = [
-  'Dejá que el otro termine. Hablá después.',
-  'Respirá antes de hablar y hablá a conciencia.',
-  'No hables de más: decí lo justo y callate.',
-  'Preguntá antes de opinar: entendé qué necesita el otro.',
-  'Repetí con tus palabras lo que entendiste.',
-  'Llevá datos, no sólo opiniones.',
-  'Elogios en público, críticas en privado.',
-  'Cerrá cada charla con próximos pasos claros.'
-];
+const OLD_DEFAULT_TIPS = ['Preguntá antes de opinar: entendé qué necesita el otro.', 'Repetí con tus palabras lo que entendiste.', 'Llevá datos, no sólo opiniones.', 'Elogios en público, críticas en privado.', 'Cerrá cada charla con próximos pasos claros.', 'Dejá que el otro termine. Hablá después.', 'Respirá antes de hablar y hablá a conciencia.', 'No hables de más: decí lo justo y callate.'];
 
 let db = load();
 function load(){
-  try { const d = JSON.parse(localStorage.getItem(KEY)); if (d && d.people && d.tips) return d; } catch {}
-  return { people: [], tips: DEFAULT_TIPS.slice() };
+  try {
+    const d = JSON.parse(localStorage.getItem(KEY));
+    if (d && d.people && d.tips) {
+      if (!d.v) { d.tips = d.tips.filter(t => !OLD_DEFAULT_TIPS.includes(t)); d.v = 2; }   // los consejos los carga el usuario
+      return d;
+    }
+  } catch {}
+  return { v: 2, people: [], tips: [] };
 }
 function save(){ try { localStorage.setItem(KEY, JSON.stringify(db)); } catch {} }
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const byId = id => db.people.find(p => p.id === id);
 const kids = id => db.people.filter(p => p.boss === id).sort((a, b) => a.name.localeCompare(b.name));
-const roots = () => db.people.filter(p => !p.boss || !byId(p.boss)).sort((a, b) => a.name.localeCompare(b.name));
+const size = id => kids(id).reduce((n, k) => n + size(k), 1);
+const roots = () => db.people.filter(p => !p.boss || !byId(p.boss)).sort((a, b) => size(b.id) - size(a.id) || a.name.localeCompare(b.name));
 const relColor = r => (REL.find(x => x[0] === r) || REL[1])[2];
 
 /* ---------- pestañas ---------- */
@@ -197,6 +227,21 @@ function branch(p, seen){
   const ch = kids(p.id).map(k => branch(k, seen)).join('');
   return `<li>${nodeHTML(p)}${ch ? `<ul>${ch}</ul>` : ''}</li>`;
 }
+let view = 'chart';
+function cardHTML(p){
+  return `<button class="card${p.rel === 'yo' ? ' me' : ''}" data-id="${p.id}" style="border-top-color:${relColor(p.rel)}">
+    <span class="name">${esc(p.name || 'Sin nombre')}</span><span class="role">${esc(p.role || '')}</span><span class="inf">${STARS[p.inf] || ''}</span></button>`;
+}
+function orgBranch(p, seen){
+  if (seen.has(p.id)) return ''; seen.add(p.id);
+  const ch = kids(p.id).map(k => orgBranch(k, seen)).join('');
+  return `<li>${cardHTML(p)}${ch ? `<ul>${ch}</ul>` : ''}</li>`;
+}
+$('view').onclick = e => {
+  const b = e.target.closest('button'); if (!b) return;
+  view = b.dataset.v; $('view').querySelectorAll('button').forEach(x => x.setAttribute('aria-pressed', x === b)); renderMap();
+};
+$('chart').onclick = e => { const n = e.target.closest('.card'); if (n) open(n.dataset.id); };
 function renderMap(){
   const q = $('q').value.trim().toLowerCase();
   let html;
@@ -206,6 +251,13 @@ function renderMap(){
   } else {
     const seen = new Set();
     html = roots().map(p => branch(p, seen)).join('');
+  }
+  const chart = view === 'chart' && !q;
+  $('chart').hidden = !chart; $('tree').hidden = chart;
+  if (chart) {
+    const seen = new Set(), rs = roots(), big = rs.filter(p => kids(p.id).length), solo = rs.filter(p => !kids(p.id).length);
+    $('chart').innerHTML = '<div class="org">' + big.map(p => `<div class="group"><ul>${orgBranch(p, seen)}</ul></div>`).join('')
+      + (solo.length ? (big.length ? '<div class="solo-l">Fuera de la línea</div>' : '') + `<div class="group"><ul style="flex-wrap:wrap;gap:10px 0">${solo.map(p => `<li>${cardHTML(p)}</li>`).join('')}</ul></div>` : '') + '</div>';
   }
   $('tree').innerHTML = html;
   $('empty').hidden = db.people.length > 0;
@@ -225,6 +277,7 @@ $('tip').onclick = () => { tipIdx++; showTip(); };
 function renderTips(){
   $('tips').innerHTML = db.tips.map((t, i) => `<li><textarea rows="1" data-i="${i}">${esc(t)}</textarea><button class="del" data-i="${i}" aria-label="Borrar">×</button></li>`).join('');
   $('tips').querySelectorAll('textarea').forEach(grow);
+  $('tips-empty').hidden = db.tips.length > 0;
 }
 function grow(t){ t.style.height = 'auto'; t.style.height = t.scrollHeight + 'px'; }
 $('tips').oninput = e => { const t = e.target; if (t.dataset.i == null) return; db.tips[t.dataset.i] = t.value; grow(t); save(); };
@@ -330,8 +383,8 @@ function toText(){
     const rows = [['Rol', p.role], ['Área', p.area], ['Responde a', boss && boss.name],
       ['Influencia', (INF.find(x => x[0] === p.inf) || [])[1]], ['Relación', (REL.find(x => x[0] === p.rel) || [])[1]],
       ['Características', p.traits], ['Cómo comunicarme', p.how]];
-    rows.forEach(([k, v]) => { if (v) L.push(`${k}: ${v}`); });
-    if (p.log?.length) { L.push('Notas:'); p.log.forEach(l => L.push(`  ${new Date(l.t).toLocaleDateString('es')} — ${l.text}`)); }
+    rows.forEach(([k, v]) => { if (v) L.push(`${k}: ${String(v).replace(/\n/g, '\n    ')}`); });
+    if (p.log?.length) { L.push('Notas:'); p.log.forEach(l => L.push(`  ${new Date(l.t).toISOString().slice(0, 10)} — ${l.text}`)); }
   });
   L.push('', '== CONSEJOS ==');
   db.tips.forEach(t => L.push('- ' + t));
@@ -343,6 +396,57 @@ $('export').onclick = async () => {
   a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(a.href), 5000);
 };
+
+/* ---------- importar ---------- */
+const FIELDS = { 'Rol': 'role', 'Área': 'area', 'Responde a': 'boss', 'Influencia': 'inf', 'Relación': 'rel', 'Características': 'traits', 'Cómo comunicarme': 'how' };
+const norm = s => String(s || '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+function parseText(text){
+  const people = [], tips = []; let sec = '', cur = null, last = null, inNotes = false;
+  for (const raw of text.replace(/\r/g, '').split('\n')) {
+    const line = raw.replace(/\s+$/, '');
+    const h = line.match(/^==\s*(.+?)\s*==$/);
+    if (h) { sec = norm(h[1]); cur = null; continue; }
+    if (sec === 'consejos') { const m = line.match(/^\s*-\s+(.+)/); if (m) tips.push(m[1].trim()); continue; }
+    if (sec !== 'personas') continue;
+    let m = line.match(/^#\s+(.+)/);
+    if (m) { cur = { name: m[1].trim(), log: [] }; people.push(cur); last = null; inNotes = false; continue; }
+    if (!cur || !line.trim()) continue;
+    if (/^Notas:\s*$/.test(line)) { inNotes = true; last = null; continue; }
+    if (inNotes && (m = line.match(/^\s+(\d{4}-\d{2}-\d{2}|\d{1,2}\/\d{1,2}\/\d{4})\s*[—-]\s*(.+)/))) {
+      const d = m[1].includes('/') ? m[1].split('/').reverse().map(x => x.padStart(2, '0')).join('-') : m[1];
+      cur.log.push({ t: Date.parse(d + 'T12:00:00') || Date.now(), text: m[2].trim() }); continue;
+    }
+    m = line.match(/^([^:]+):\s*(.*)$/);
+    if (m && FIELDS[m[1].trim()]) { last = FIELDS[m[1].trim()]; cur[last] = m[2]; inNotes = false; continue; }
+    if (last && /^\s/.test(line)) cur[last] += '\n' + line.trim();
+  }
+  return { people, tips };
+}
+function importText(text){
+  const { people, tips } = parseText(text);
+  if (!people.length && !tips.length) { alert('No encontré datos en el archivo. Tiene que tener secciones "== PERSONAS ==" y/o "== CONSEJOS ==".'); return; }
+  if (!confirm(`Voy a cargar ${people.length} persona(s) y ${tips.length} consejo(s). Si alguien ya existe con el mismo nombre, se actualiza. ¿Sigo?`)) return;
+  const find = n => db.people.find(p => norm(p.name) === norm(n));
+  const pick = (list, v) => { const x = list.find(o => norm(o[1]) === norm(v) || o[0] === norm(v)); return x ? x[0] : ''; };
+  for (const q of people) {
+    let p = find(q.name);
+    if (!p) { p = { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), name: q.name, role: '', area: '', boss: '', inf: '', rel: '', traits: '', how: '', log: [] }; db.people.push(p); }
+    for (const k of ['role', 'area', 'traits', 'how']) if (q[k] != null) p[k] = q[k];
+    if (q.inf != null) p.inf = pick(INF, q.inf);
+    if (q.rel != null) p.rel = pick(REL, q.rel);
+    p._boss = q.boss;
+    for (const l of q.log) if (!(p.log ||= []).some(x => x.text === l.text)) p.log.push(l);
+  }
+  for (const p of db.people) {
+    if (p._boss === undefined) continue;
+    const b = p._boss && find(p._boss); delete p._boss;
+    p.boss = b && !descendants(p.id).has(b.id) ? b.id : '';
+  }
+  for (const t of tips) if (!db.tips.includes(t)) db.tips.push(t);
+  save(); render(); toast('Datos cargados.');
+}
+$('import').onclick = () => $('file').click();
+$('file').onchange = async e => { const f = e.target.files[0]; e.target.value = ''; if (f) importText(await f.text()); };
 
 const AI_PROMPT = `Soy Senior Mechanical Engineer y empecé en un trabajo nuevo. Abajo está mi mapa de la empresa: quién responde a quién, rol, influencia, mi relación con cada persona, sus características y mis notas de charlas. También mis reglas de comunicación.
 Analizalo y decime:
