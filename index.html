@@ -41,8 +41,9 @@ header.top h1{flex:1;margin:0;font-size:24px;font-weight:750;letter-spacing:-.01
 .view button{flex:1;padding:8px 0;border-radius:9px;font-weight:650;color:var(--muted);font-size:15px}
 .view button[aria-pressed=true]{background:var(--accent-soft);color:var(--ink)}
 .chart{overflow-x:auto;margin:0 -16px;padding:4px 16px 8px}
-.org{display:flex;flex-direction:column;align-items:flex-start;gap:22px}
-.org .group{min-width:100%;display:flex;justify-content:center}
+.org{display:flex;flex-direction:column;gap:22px;width:max-content;min-width:100%}
+.org .group{display:flex}
+.org .group > ul{margin:0 auto}
 .org ul{display:flex;justify-content:center;list-style:none;margin:0;padding:18px 0 0;position:relative}
 .org > .group > ul{padding-top:0}
 .org li{display:flex;flex-direction:column;align-items:center;position:relative;padding:18px 5px 0}
@@ -60,7 +61,14 @@ header.top h1{flex:1;margin:0;font-size:24px;font-weight:750;letter-spacing:-.01
 .card{width:132px;background:var(--card);border:1px solid var(--line);border-top:4px solid var(--neutral);border-radius:12px;padding:9px 8px 8px;text-align:center}
 .card{position:relative}
 .org ul ul > li > .card::before{content:'';position:absolute;top:-9px;left:50%;margin-left:-6px;border:6px solid transparent;border-top-color:#59606E;border-bottom:0}
-.card.tipc{width:150px;border-top-color:var(--accent);font-size:14px;line-height:1.3;padding:10px 8px;font-weight:600}
+.card.tipc{width:128px;font-size:14px;line-height:1.3;padding:10px 8px 12px;font-weight:600;border-top-width:5px;background:linear-gradient(180deg,color-mix(in srgb,var(--c) 16%,var(--card)),var(--card) 70%)}
+.card.tipc .ic{display:block;font-size:30px;line-height:1.1;margin-bottom:6px}
+.card.tipc.root{width:160px;font-size:15px}
+.card.tipc.root .ic{font-size:40px}
+.icons{display:grid;grid-template-columns:repeat(8,1fr);gap:4px;max-height:168px;overflow:auto;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:6px}
+.icons button{font-size:24px;padding:5px 0;border-radius:8px}
+.icons button[aria-pressed=true]{background:var(--accent-soft);box-shadow:inset 0 0 0 2px var(--accent)}
+.node .ic{font-size:22px;flex:none}
 .modal{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:15;display:flex;align-items:flex-end;justify-content:center}
 .modal .box{background:var(--bg);border:1px solid var(--line);border-radius:18px 18px 0 0;width:100%;max-width:640px;padding:16px 16px calc(20px + env(safe-area-inset-bottom,0px))}
 .modal .row{display:flex;gap:8px;flex-wrap:wrap;margin-top:16px}
@@ -190,6 +198,8 @@ textarea.in{min-height:80px;resize:vertical}
   <div class="box">
     <label class="f" for="t-text" style="margin-top:0">Consejo</label>
     <textarea class="in" id="t-text"></textarea>
+    <label class="f">Ícono</label>
+    <div class="icons" id="t-icons"></div>
     <label class="f" for="t-parent">Va debajo de</label>
     <select class="in" id="t-parent"></select>
     <div class="row">
@@ -306,18 +316,28 @@ function tdesc(id){
   while (grew) { grew = false; for (const t of db.tips) if (t.parent && out.has(t.parent) && !out.has(t.id)) { out.add(t.id); grew = true; } }
   return out;
 }
+const ICONS = '👂 🫁 🧠 💬 🗣️ 🤐 🎯 ❓ 🤔 💡 🤝 👔 🪒 🧼 ☕ 🚫 🛑 ⏸️ 🐢 ✅ ⚠️ 📝 🔤 ✂️ ⏳ 🧘 😌 😤 👀 ❤️ 💪 📈 🔍 🧩 🧭 🌱 🔥 ⭐ 📣 🙋 🎤 🧊 🛠️ 📐 🚀 🏆 🙏 😊'.split(' ');
+const PALETTE = ['#4C8DD6', '#3FBF84', '#E0A23A', '#C77DFF', '#E06A55', '#4FC3C9'];
+function tipColor(t){
+  const seen = new Set(); while (t.parent && tipById(t.parent) && !seen.has(t.id)) { seen.add(t.id); t = tipById(t.parent); }
+  return PALETTE[Math.max(0, tkids('').indexOf(t)) % PALETTE.length];
+}
+function renderIcons(){
+  $('t-icons').innerHTML = ['', ...ICONS].map(i => `<button data-i="${i}" aria-pressed="${(tcur.icon || '') === i}">${i || '<span style="font-size:14px;color:var(--muted)">—</span>'}</button>`).join('');
+}
 function renderTips(){
   const seen = new Set();
-  const card = t => `<button class="card tipc" data-id="${t.id}">${esc(t.text)}</button>`;
+  const card = t => `<button class="card tipc${t.parent && tipById(t.parent) ? '' : ' root'}" data-id="${t.id}" style="--c:${tipColor(t)};border-top-color:var(--c)">${t.icon ? `<span class="ic">${t.icon}</span>` : ''}${esc(t.text)}</button>`;
   const branch = t => { if (seen.has(t.id)) return ''; seen.add(t.id); const ch = tkids(t.id).map(branch).join(''); return `<li>${card(t)}${ch ? `<ul>${ch}</ul>` : ''}</li>`; };
   const rs = tkids(''), big = rs.filter(t => tkids(t.id).length), solo = rs.filter(t => !tkids(t.id).length);
   $('tchart').innerHTML = '<div class="org">' + big.map(t => `<div class="group"><ul>${branch(t)}</ul></div>`).join('')
     + (solo.length ? `<div class="group"><ul style="flex-wrap:wrap;gap:10px 0">${solo.map(t => `<li>${card(t)}</li>`).join('')}</ul></div>` : '') + '</div>';
   seen.clear();
   const lbranch = t => { if (seen.has(t.id)) return ''; seen.add(t.id); const ch = tkids(t.id).map(lbranch).join('');
-    return `<li><button class="node" data-id="${t.id}"><span class="who" style="white-space:pre-wrap">${esc(t.text)}</span></button>${ch ? `<ul>${ch}</ul>` : ''}</li>`; };
+    return `<li><button class="node" data-id="${t.id}">${t.icon ? `<span class="ic">${t.icon}</span>` : ''}<span class="who" style="white-space:pre-wrap">${esc(t.text)}</span></button>${ch ? `<ul>${ch}</ul>` : ''}</li>`; };
   $('tlist').innerHTML = rs.map(lbranch).join('');
   $('tchart').hidden = tview !== 'chart'; $('tlist').hidden = tview !== 'list';
+  const c = $('tchart'); if (!c.scrollLeft) c.scrollLeft = (c.scrollWidth - c.clientWidth) / 2;   // arrancar centrado
   $('tips-empty').hidden = db.tips.length > 0;
 }
 $('tview').onclick = e => {
@@ -326,7 +346,7 @@ $('tview').onclick = e => {
 };
 function openTip(id){
   tcur = tipById(id); if (!tcur) return;
-  $('t-text').value = tcur.text;
+  $('t-text').value = tcur.text; renderIcons();
   const bad = tdesc(tcur.id);
   $('t-parent').innerHTML = '<option value="">— Arriba de todo —</option>' + db.tips.filter(t => !bad.has(t.id))
     .map(t => `<option value="${t.id}"${t.id === tcur.parent ? ' selected' : ''}>${esc(t.text.length > 60 ? t.text.slice(0, 60) + '…' : t.text)}</option>`).join('');
@@ -344,6 +364,7 @@ $('tchart').onclick = $('tlist').onclick = e => { const n = e.target.closest('[d
 $('t-text').oninput = () => { tcur.text = $('t-text').value; save(); };
 $('t-parent').onchange = () => { tcur.parent = $('t-parent').value; save(); };
 $('t-done').onclick = closeTip;
+$('t-icons').onclick = e => { const b = e.target.closest('button'); if (!b) return; tcur.icon = b.dataset.i; save(); renderIcons(); renderTips(); };
 $('tip-modal').onclick = e => { if (e.target.id === 'tip-modal') closeTip(); };
 $('t-del').onclick = () => { if (confirm('¿Borrar este consejo? Los de abajo suben un nivel.')) { removeTip(tcur.id); tcur = null; closeTip(); } };
 $('t-child').onclick = () => {
@@ -449,7 +470,7 @@ function toText(){
   });
   L.push('', '== CONSEJOS ==');
   const tseen = new Set();
-  const twalk = (t, depth) => { if (tseen.has(t.id)) return; tseen.add(t.id); L.push('  '.repeat(depth) + '- ' + t.text.replace(/\n/g, ' ')); tkids(t.id).forEach(k => twalk(k, depth + 1)); };
+  const twalk = (t, depth) => { if (tseen.has(t.id)) return; tseen.add(t.id); L.push('  '.repeat(depth) + '- ' + (t.icon ? `[${t.icon}] ` : '') + t.text.replace(/\n/g, ' ')); tkids(t.id).forEach(k => twalk(k, depth + 1)); };
   tkids('').forEach(t => twalk(t, 0));
   return L.join('\n') + '\n';
 }
@@ -469,7 +490,7 @@ function parseText(text){
     const line = raw.replace(/\s+$/, '');
     const h = line.match(/^==\s*(.+?)\s*==$/);
     if (h) { sec = norm(h[1]); cur = null; continue; }
-    if (sec === 'consejos') { const m = line.match(/^(\s*)[-*•]\s+(.+)/); if (m) tips.push({ depth: Math.floor(m[1].replace(/\t/g, '  ').length / 2), text: m[2].trim() }); continue; }
+    if (sec === 'consejos') { const m = line.match(/^(\s*)[-*•]\s+(.+)/); if (m) { const ic = m[2].match(/^\[([^\]]{1,8})\]\s*(.*)/); tips.push({ depth: Math.floor(m[1].replace(/\t/g, '  ').length / 2), icon: ic ? ic[1].trim() : undefined, text: (ic ? ic[2] : m[2]).trim() }); } continue; }
     if (sec !== 'personas') continue;
     let m = line.match(/^#\s+(.+)/);
     if (m) { cur = { name: m[1].trim(), log: [] }; people.push(cur); last = null; inNotes = false; continue; }
@@ -509,6 +530,7 @@ function importText(text){
   for (const q of tips) {
     let t = db.tips.find(x => norm(x.text) === norm(q.text));
     if (!t) { t = { id: uid(), text: q.text, parent: '' }; db.tips.push(t); }
+    if (q.icon !== undefined) t.icon = q.icon;
     stack.length = Math.min(q.depth, stack.length);
     const parent = stack[stack.length - 1] || '';
     if (!tdesc(t.id).has(parent)) t.parent = parent;
