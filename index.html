@@ -40,7 +40,10 @@ header.top h1{flex:1;margin:0;font-size:24px;font-weight:750;letter-spacing:-.01
 .view{display:flex;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:3px;margin-bottom:12px}
 .view button{flex:1;padding:8px 0;border-radius:9px;font-weight:650;color:var(--muted);font-size:15px}
 .view button[aria-pressed=true]{background:var(--accent-soft);color:var(--ink)}
-.chart{overflow-x:auto;margin:0 -16px;padding:4px 16px 8px}
+.chart{overflow:auto;margin:0 -16px;padding:4px 16px 8px;touch-action:pan-x pan-y;max-height:calc(100vh - 230px)}
+.zoom{display:flex;justify-content:flex-end;align-items:center;gap:6px;margin:-4px 0 8px}
+.zoom button{min-width:38px;height:34px;padding:0 10px;border-radius:10px;background:var(--card);border:1px solid var(--line);font-weight:700}
+.zoom span{color:var(--muted);font-size:13px;min-width:42px;text-align:center}
 .org{display:flex;flex-direction:column;gap:22px;width:max-content;min-width:100%}
 .org .group{display:flex}
 .org .group > ul{margin:0 auto}
@@ -126,6 +129,7 @@ textarea.in{min-height:80px;resize:vertical}
   <section id="tab-map">
     <button class="tip" id="tip"><small>Recordá · tocá para otro</small><span id="tip-text"></span></button>
     <div class="view" id="view"><button data-v="chart" aria-pressed="true">Organigrama</button><button data-v="list" aria-pressed="false">Lista</button></div>
+    <div class="zoom" data-for="chart" id="pzoom"><button data-z="out" aria-label="Alejar">−</button><span></span><button data-z="in" aria-label="Acercar">+</button><button data-z="fit">Ajustar</button></div>
     <div class="chart" id="chart"></div>
     <input class="search" id="q" type="search" placeholder="Buscar nombre, rol o área">
     <ul class="tree" id="tree"></ul>
@@ -144,6 +148,7 @@ textarea.in{min-height:80px;resize:vertical}
     <div class="view" id="tview"><button data-v="chart" aria-pressed="true">Mapa</button><button data-v="list" aria-pressed="false">Lista</button></div>
     <p class="hint">Tocá un consejo para editarlo, moverlo debajo de otro o agregarle uno abajo.</p>
     <p class="empty" id="tips-empty" hidden>Todavía no cargaste consejos.</p>
+    <div class="zoom" data-for="tchart"><button data-z="out" aria-label="Alejar">−</button><span></span><button data-z="in" aria-label="Acercar">+</button><button data-z="fit">Ajustar</button></div>
     <div class="chart" id="tchart"></div>
     <ul class="tree" id="tlist"></ul>
     <form class="add-row" id="tip-form">
@@ -293,6 +298,7 @@ function renderMap(){
     $('chart').innerHTML = '<div class="org">' + big.map(p => `<div class="group"><ul>${orgBranch(p, seen)}</ul></div>`).join('')
       + (solo.length ? (big.length ? '<div class="solo-l">Fuera de la línea</div>' : '') + `<div class="group"><ul style="flex-wrap:wrap;gap:10px 0">${solo.map(p => `<li>${cardHTML(p)}</li>`).join('')}</ul></div>` : '') + '</div>';
   }
+  applyZoom('chart'); $('pzoom').hidden = !chart || !db.people.length;
   $('tree').innerHTML = html;
   $('empty').hidden = db.people.length > 0;
   $('legend').hidden = db.people.length === 0;
@@ -306,6 +312,37 @@ function showTip(){
   if (db.tips.length) $('tip-text').textContent = db.tips[tipIdx % db.tips.length].text;
 }
 $('tip').onclick = () => { tipIdx++; showTip(); };
+
+/* ---------- zoom de los mapas ---------- */
+const ZKEY = 'communication-zoom';
+let Z = { chart: 1, tchart: 1 };
+try { Object.assign(Z, JSON.parse(localStorage.getItem(ZKEY)) || {}); } catch {}
+function applyZoom(id){
+  const org = $(id).querySelector('.org'); if (!org) return;
+  org.style.zoom = Z[id];
+  const bar = document.querySelector(`.zoom[data-for="${id}"] span`); if (bar) bar.textContent = Math.round(Z[id] * 100) + '%';
+}
+function setZoom(id, z){
+  const c = $(id), old = Z[id], cx = c.scrollLeft + c.clientWidth / 2, cy = c.scrollTop + c.clientHeight / 2;
+  Z[id] = Math.min(2, Math.max(0.25, Math.round(z * 100) / 100));
+  applyZoom(id);
+  const k = Z[id] / old; c.scrollLeft = cx * k - c.clientWidth / 2; c.scrollTop = cy * k - c.clientHeight / 2;   // mantener el centro
+  try { localStorage.setItem(ZKEY, JSON.stringify(Z)); } catch {}
+}
+document.querySelectorAll('.zoom').forEach(bar => bar.onclick = e => {
+  const b = e.target.closest('button'); if (!b) return;
+  const id = bar.dataset.for, org = $(id).querySelector('.org'); if (!org) return;
+  if (b.dataset.z === 'in') setZoom(id, Z[id] * 1.25);
+  else if (b.dataset.z === 'out') setZoom(id, Z[id] / 1.25);
+  else { const natural = org.getBoundingClientRect().width / Z[id]; setZoom(id, Math.min(1, ($(id).clientWidth - 32) / natural)); $(id).scrollLeft = 0; }
+});
+for (const id of ['chart', 'tchart']) {   // pellizcar con dos dedos
+  let d0 = 0, z0 = 1;
+  const dist = t => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+  $(id).addEventListener('touchstart', e => { if (e.touches.length === 2) { d0 = dist(e.touches); z0 = Z[id]; } }, { passive: true });
+  $(id).addEventListener('touchmove', e => { if (e.touches.length === 2 && d0) { e.preventDefault(); setZoom(id, z0 * dist(e.touches) / d0); } }, { passive: false });
+  $(id).addEventListener('touchend', e => { if (e.touches.length < 2) d0 = 0; });
+}
 
 /* ---------- consejos (árbol) ---------- */
 let tview = 'chart', tcur = null;
@@ -337,6 +374,7 @@ function renderTips(){
     return `<li><button class="node" data-id="${t.id}">${t.icon ? `<span class="ic">${t.icon}</span>` : ''}<span class="who" style="white-space:pre-wrap">${esc(t.text)}</span></button>${ch ? `<ul>${ch}</ul>` : ''}</li>`; };
   $('tlist').innerHTML = rs.map(lbranch).join('');
   $('tchart').hidden = tview !== 'chart'; $('tlist').hidden = tview !== 'list';
+  applyZoom('tchart'); $('tchart').previousElementSibling.hidden = tview !== 'chart' || !db.tips.length;
   const c = $('tchart'); if (!c.scrollLeft) c.scrollLeft = (c.scrollWidth - c.clientWidth) / 2;   // arrancar centrado
   $('tips-empty').hidden = db.tips.length > 0;
 }
