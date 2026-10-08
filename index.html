@@ -62,7 +62,12 @@ header.top h1{flex:1;margin:0;font-size:24px;font-weight:750;letter-spacing:-.01
 .org > .group > ul > li::before,.org > .group > ul > li::after{display:none}
 .org ul ul::before{content:'';position:absolute;top:0;left:50%;height:18px;border-left:2px solid var(--line)}
 .card{width:132px;background:var(--card);border:1px solid var(--line);border-top:4px solid var(--neutral);border-radius:12px;padding:9px 8px 8px;text-align:center}
-.card{position:relative}
+.card{position:relative;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+.card.dragging{opacity:.3}
+.drag-ghost{position:fixed;z-index:30;pointer-events:none;opacity:.9;transform:translate(-50%,-50%) scale(1.05);box-shadow:0 10px 30px rgba(0,0,0,.6)}
+.drop-before{box-shadow:-5px 0 0 var(--accent)!important}
+.drop-after{box-shadow:5px 0 0 var(--accent)!important}
+.drop-child{box-shadow:0 0 0 3px var(--accent)!important}
 .org ul ul > li > .card::before{content:'';position:absolute;top:-9px;left:50%;margin-left:-6px;border:6px solid transparent;border-top-color:#59606E;border-bottom:0}
 .card.tipc{width:128px;font-size:14px;line-height:1.3;padding:10px 8px 12px;font-weight:600;border-top-width:5px;background:linear-gradient(180deg,color-mix(in srgb,var(--c) 16%,var(--card)),var(--card) 70%)}
 .card.tipc .ic{display:block;font-size:30px;line-height:1.1;margin-bottom:6px}
@@ -146,7 +151,7 @@ textarea.in{min-height:80px;resize:vertical}
 
   <section id="tab-tips" hidden>
     <div class="view" id="tview"><button data-v="chart" aria-pressed="true">Mapa</button><button data-v="list" aria-pressed="false">Lista</button></div>
-    <p class="hint">Tocá un consejo para editarlo, moverlo debajo de otro o agregarle uno abajo.</p>
+    <p class="hint">Tocá un consejo para editarlo. Mantené apretado y arrastralo para moverlo: soltalo a la izquierda o derecha de otro para ponerlo al lado, o en el medio para ponerlo debajo.</p>
     <p class="empty" id="tips-empty" hidden>Todavía no cargaste consejos.</p>
     <div class="zoom" data-for="tchart"><button data-z="out" aria-label="Alejar">−</button><span></span><button data-z="in" aria-label="Acercar">+</button><button data-z="fit">Ajustar</button></div>
     <div class="chart" id="tchart"></div>
@@ -209,6 +214,8 @@ textarea.in{min-height:80px;resize:vertical}
     <select class="in" id="t-parent"></select>
     <div class="row">
       <button class="btn" id="t-done">Listo</button>
+      <button class="btn ghost" id="t-left" aria-label="Mover a la izquierda">◀</button>
+      <button class="btn ghost" id="t-right" aria-label="Mover a la derecha">▶</button>
       <button class="btn ghost" id="t-child">+ Agregar debajo</button>
       <button class="btn danger" id="t-del">Borrar</button>
     </div>
@@ -239,9 +246,10 @@ function save(){ try { localStorage.setItem(KEY, JSON.stringify(db)); } catch {}
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const byId = id => db.people.find(p => p.id === id);
-const kids = id => db.people.filter(p => p.boss === id).sort((a, b) => a.name.localeCompare(b.name));
+const ord = (a, b) => (a.order ?? 1e9) - (b.order ?? 1e9);
+const kids = id => db.people.filter(p => p.boss === id).sort((a, b) => ord(a, b) || a.name.localeCompare(b.name));
 const size = id => kids(id).reduce((n, k) => n + size(k), 1);
-const roots = () => db.people.filter(p => !p.boss || !byId(p.boss)).sort((a, b) => size(b.id) - size(a.id) || a.name.localeCompare(b.name));
+const roots = () => db.people.filter(p => !p.boss || !byId(p.boss)).sort((a, b) => ord(a, b) || size(b.id) - size(a.id) || a.name.localeCompare(b.name));
 const relColor = r => (REL.find(x => x[0] === r) || REL[1])[2];
 
 /* ---------- pestañas ---------- */
@@ -280,7 +288,7 @@ $('view').onclick = e => {
   const b = e.target.closest('button'); if (!b) return;
   view = b.dataset.v; $('view').querySelectorAll('button').forEach(x => x.setAttribute('aria-pressed', x === b)); renderMap();
 };
-$('chart').onclick = e => { const n = e.target.closest('.card'); if (n) open(n.dataset.id); };
+$('chart').onclick = e => { if (dragEnded()) return; const n = e.target.closest('.card'); if (n) open(n.dataset.id); };
 function renderMap(){
   const q = $('q').value.trim().toLowerCase();
   let html;
@@ -312,6 +320,75 @@ function showTip(){
   if (db.tips.length) $('tip-text').textContent = db.tips[tipIdx % db.tips.length].text;
 }
 $('tip').onclick = () => { tipIdx++; showTip(); };
+
+/* ---------- mover tarjetas (mantener apretado y arrastrar) ---------- */
+const DRAG = {
+  chart: { list: () => db.people, pk: 'boss', kids: id => id ? kids(id) : roots(), desc: id => descendants(id), get: id => byId(id), redraw: () => renderMap() },
+  tchart: { list: () => db.tips, pk: 'parent', kids: id => tkids(id), desc: id => tdesc(id), get: id => tipById(id), redraw: () => renderTips() }
+};
+// pone a `item` como hermano antes/después de `ref`, o como último hijo de `ref`
+function placeItem(A, item, ref, where){
+  const parent = where === 'child' ? ref.id : (A.get(ref[A.pk]) ? ref[A.pk] : '');
+  if (ref.id === item.id || parent && A.desc(item.id).has(parent)) return false;   // no puede quedar debajo de sí mismo
+  const sibs = A.kids(parent).filter(x => x.id !== item.id);
+  const i = where === 'child' ? sibs.length : sibs.indexOf(ref) + (where === 'after' ? 1 : 0);
+  sibs.splice(i, 0, item);
+  item[A.pk] = parent;
+  sibs.forEach((x, n) => x.order = n);
+  save(); return true;
+}
+function shiftItem(A, item, dir){
+  const sibs = A.kids(A.get(item[A.pk]) ? item[A.pk] : ''), i = sibs.indexOf(item), j = i + dir;
+  if (j < 0 || j >= sibs.length) return;
+  placeItem(A, item, sibs[j], dir < 0 ? 'before' : 'after');
+}
+let drag = null, dragEndAt = 0;
+const dragEnded = () => Date.now() - dragEndAt < 400;
+for (const id of Object.keys(DRAG)) {
+  const box = $(id), A = DRAG[id];
+  box.addEventListener('contextmenu', e => { if (e.target.closest('.card')) e.preventDefault(); });
+  box.addEventListener('pointerdown', e => {
+    const card = e.target.closest('.card'); if (!card || drag) return;
+    const st = { x: e.clientX, y: e.clientY, card, box, A, timer: 0, on: false, pid: e.pointerId };
+    st.timer = setTimeout(() => {
+      st.on = true; card.classList.add('dragging');
+      const g = card.cloneNode(true); g.classList.add('drag-ghost'); g.style.width = card.offsetWidth + 'px';
+      g.style.left = st.x + 'px'; g.style.top = st.y + 'px'; document.body.appendChild(g); st.ghost = g;
+      navigator.vibrate?.(25);
+    }, 350);
+    drag = st;
+  });
+  box.addEventListener('touchmove', e => { if (drag?.on) e.preventDefault(); }, { passive: false });
+}
+function clearDrop(){ document.querySelectorAll('.drop-before,.drop-after,.drop-child').forEach(x => x.classList.remove('drop-before', 'drop-after', 'drop-child')); }
+addEventListener('pointermove', e => {
+  if (!drag || e.pointerId !== drag.pid) return;
+  if (!drag.on) { if (Math.hypot(e.clientX - drag.x, e.clientY - drag.y) > 8) { clearTimeout(drag.timer); drag = null; } return; }
+  e.preventDefault();
+  drag.ghost.style.left = e.clientX + 'px'; drag.ghost.style.top = e.clientY + 'px';
+  const r = drag.box.getBoundingClientRect(), edge = 40;   // desplazar al acercarse al borde
+  if (e.clientX < r.left + edge) drag.box.scrollLeft -= 12; else if (e.clientX > r.right - edge) drag.box.scrollLeft += 12;
+  if (e.clientY < r.top + edge) drag.box.scrollTop -= 12; else if (e.clientY > r.bottom - edge) drag.box.scrollTop += 12;
+  clearDrop(); drag.target = null;
+  const t = document.elementFromPoint(e.clientX, e.clientY)?.closest('.card');
+  if (!t || t === drag.card || !drag.box.contains(t)) return;
+  const b = t.getBoundingClientRect(), fx = (e.clientX - b.left) / b.width;
+  const where = fx < .3 ? 'before' : fx > .7 ? 'after' : 'child';
+  t.classList.add('drop-' + where); drag.target = { id: t.dataset.id, where };
+}, { passive: false });
+function endDrag(){
+  if (!drag) return;
+  clearTimeout(drag.timer);
+  if (drag.on) {
+    drag.ghost.remove(); drag.card.classList.remove('dragging'); clearDrop(); dragEndAt = Date.now();
+    const A = drag.A, tg = drag.target;
+    if (tg) { const item = A.get(drag.card.dataset.id), ref = A.get(tg.id); if (item && ref && !placeItem(A, item, ref, tg.where)) toast('No se puede mover ahí.'); }
+    A.redraw();
+  }
+  drag = null;
+}
+addEventListener('pointerup', endDrag);
+addEventListener('pointercancel', endDrag);
 
 /* ---------- zoom de los mapas ---------- */
 const ZKEY = 'communication-zoom';
@@ -347,7 +424,7 @@ for (const id of ['chart', 'tchart']) {   // pellizcar con dos dedos
 /* ---------- consejos (árbol) ---------- */
 let tview = 'chart', tcur = null;
 const tipById = id => db.tips.find(t => t.id === id);
-const tkids = id => db.tips.filter(t => id ? t.parent === id : !t.parent || !tipById(t.parent));
+const tkids = id => db.tips.filter(t => id ? t.parent === id : !t.parent || !tipById(t.parent)).sort(ord);
 function tdesc(id){
   const out = new Set([id]); let grew = true;
   while (grew) { grew = false; for (const t of db.tips) if (t.parent && out.has(t.parent) && !out.has(t.id)) { out.add(t.id); grew = true; } }
@@ -398,10 +475,12 @@ function removeTip(id){
   const t = tipById(id); db.tips = db.tips.filter(x => x.id !== id);
   db.tips.forEach(x => { if (x.parent === id) x.parent = t.parent || ''; });
 }
-$('tchart').onclick = $('tlist').onclick = e => { const n = e.target.closest('[data-id]'); if (n) openTip(n.dataset.id); };
+$('tchart').onclick = $('tlist').onclick = e => { if (dragEnded()) return; const n = e.target.closest('[data-id]'); if (n) openTip(n.dataset.id); };
 $('t-text').oninput = () => { tcur.text = $('t-text').value; save(); };
 $('t-parent').onchange = () => { tcur.parent = $('t-parent').value; save(); };
 $('t-done').onclick = closeTip;
+$('t-left').onclick = () => { shiftItem(DRAG.tchart, tcur, -1); renderTips(); };
+$('t-right').onclick = () => { shiftItem(DRAG.tchart, tcur, 1); renderTips(); };
 $('t-icons').onclick = e => { const b = e.target.closest('button'); if (!b) return; tcur.icon = b.dataset.i; save(); renderIcons(); renderTips(); };
 $('tip-modal').onclick = e => { if (e.target.id === 'tip-modal') closeTip(); };
 $('t-del').onclick = () => { if (confirm('¿Borrar este consejo? Los de abajo suben un nivel.')) { removeTip(tcur.id); tcur = null; closeTip(); } };
@@ -572,6 +651,7 @@ function importText(text){
     stack.length = Math.min(q.depth, stack.length);
     const parent = stack[stack.length - 1] || '';
     if (!tdesc(t.id).has(parent)) t.parent = parent;
+    t.order = db.tips.length + tips.indexOf(q);
     stack.push(t.id);
   }
   save(); render(); toast('Datos cargados.');
